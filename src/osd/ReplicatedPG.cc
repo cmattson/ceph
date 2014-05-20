@@ -3371,8 +3371,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	map<string, bufferlist> out;
 	result = getattrs_maybe_cache(
 	  ctx->obc,
-	  &out,
-	  true);
+	  &out);
         
         bufferlist bl;
         ::encode(out, bl);
@@ -5411,8 +5410,7 @@ int ReplicatedPG::fill_in_copy_get(
   if (!cursor.attr_complete) {
     result = getattrs_maybe_cache(
       ctx->obc,
-      &out_attrs,
-      true);
+      &out_attrs);
     if (result < 0) {
       if (cb) {
         delete cb;
@@ -12112,25 +12110,21 @@ int ReplicatedPG::getattr_maybe_cache(
 
 int ReplicatedPG::getattrs_maybe_cache(
   ObjectContextRef obc,
-  map<string, bufferlist> *out,
-  bool user_only)
+  map<string, bufferlist> *out)
 {
   int r = 0;
+  map<string, bufferlist> tmp;
+  assert(out != NULL);
   if (pool.info.require_rollback()) {
-    if (out)
-      *out = obc->attr_cache;
+    tmp = obc->attr_cache;
   } else {
-    r = pgbackend->objects_get_attrs(obc->obs.oi.soid, out);
+    r = pgbackend->objects_get_attrs(obc->obs.oi.soid, &tmp);
   }
-  if (out && user_only) {
-    map<string, bufferlist> tmp;
-    for (map<string, bufferlist>::iterator i = out->begin();
-	 i != out->end();
-	 ++i) {
-      if (i->first.size() > 1 && i->first[0] == '_')
-	tmp[i->first.substr(1, i->first.size())].claim(i->second);
-    }
-    tmp.swap(*out);
+  for (map<string, bufferlist>::iterator i = tmp.begin();
+      i != tmp.end();
+      ++i) {
+    if (i->first.size() > 1 && i->first[0] == '_')
+      (*out)[i->first.substr(1, i->first.size())].claim(i->second);
   }
   return r;
 }
