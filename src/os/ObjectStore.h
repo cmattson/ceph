@@ -172,8 +172,12 @@ public:
 
     /// @see Sequencer_impl::flush_commit()
     bool flush_commit(Context *c) {
-      assert(p);
-      return p->flush_commit(c);
+      if (!p) {
+	delete c;
+	return true;
+      } else {
+	return p->flush_commit(c);
+      }
     }
   };
 
