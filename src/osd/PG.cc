@@ -5168,6 +5168,14 @@ PG::RecoveryState::Started::Started(my_context ctx)
 }
 
 boost::statechart::result
+PG::RecoveryState::Started::react(const IntervalFlush&)
+{
+  context< RecoveryMachine >().pg->recovery_state.end_block_outgoing();
+  return discard_event();
+}
+
+
+boost::statechart::result
 PG::RecoveryState::Started::react(const FlushedEvt&)
 {
   PG *pg = context< RecoveryMachine >().pg;
@@ -5219,6 +5227,14 @@ PG::RecoveryState::Reset::Reset(my_context ctx)
 {
   context< RecoveryMachine >().log_enter(state_name);
   PG *pg = context< RecoveryMachine >().pg;
+
+  pg->recovery_state.clear_blocked_outgoing();
+  if (!pg->osr->flush_commit(
+	new QueuePeeringEvt<IntervalFlush>(
+	  pg, pg->get_osdmap()->get_epoch(), IntervalFlush()))) {
+    pg->recovery_state.begin_block_outgoing();
+  }
+
   pg->flushes_in_progress = 0;
   pg->set_last_peering_reset();
 }
@@ -5228,6 +5244,13 @@ PG::RecoveryState::Reset::react(const FlushedEvt&)
 {
   PG *pg = context< RecoveryMachine >().pg;
   pg->on_flushed();
+  return discard_event();
+}
+
+boost::statechart::result
+PG::RecoveryState::Reset::react(const IntervalFlush&)
+{
+  context< RecoveryMachine >().pg->recovery_state.end_block_outgoing();
   return discard_event();
 }
 
@@ -7272,18 +7295,51 @@ bool PG::PriorSet::affected_by_map(const OSDMapRef osdmap, const PG *debug_pg) c
 
 void PG::RecoveryState::start_handle(RecoveryCtx *new_ctx) {
   assert(!rctx);
-  rctx = new_ctx;
-  if (rctx)
-    rctx->start_time = ceph_clock_now(pg->cct);
+  assert(!ext_ctx);
+  ext_ctx = new_ctx;
+  if (new_ctx) {
+    if (messages_pending_flush) {
+      assert(messages_pending_flush);
+      rctx = RecoveryCtx(*messages_pending_flush, *new_ctx);
+    } else {
+      assert(!messages_pending_flush);
+      rctx = *new_ctx;
+    }
+  }
+  rctx->start_time = ceph_clock_now(pg->cct);
+}
+
+void PG::RecoveryState::begin_block_outgoing() {
+  assert(!messages_pending_flush);
+  assert(ext_ctx);
+  assert(rctx);
+  messages_pending_flush = BufferedRecoveryMessages();
+  rctx = RecoveryCtx(*messages_pending_flush, *ext_ctx);
+}
+
+void PG::RecoveryState::clear_blocked_outgoing() {
+  assert(ext_ctx);
+  assert(rctx);
+  messages_pending_flush = boost::optional<BufferedRecoveryMessages>();
+}
+
+void PG::RecoveryState::end_block_outgoing() {
+  assert(messages_pending_flush);
+  assert(ext_ctx);
+  assert(rctx);
+
+  rctx = RecoveryCtx(*ext_ctx);
+  rctx->accept_buffered_messages(*messages_pending_flush);
+  messages_pending_flush = boost::optional<BufferedRecoveryMessages>();
 }
 
 void PG::RecoveryState::end_handle() {
-  if (rctx) {
-    utime_t dur = ceph_clock_now(pg->cct) - rctx->start_time;
-    machine.event_time += dur;
-  }
+  utime_t dur = ceph_clock_now(pg->cct) - rctx->start_time;
+  machine.event_time += dur;
+
   machine.event_count++;
-  rctx = 0;
+  rctx = boost::optional<RecoveryCtx>();
+  ext_ctx = NULL;
 }
 
 void intrusive_ptr_add_ref(PG *pg) { pg->get("intptr"); }
