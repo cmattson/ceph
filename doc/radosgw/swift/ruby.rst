@@ -4,6 +4,18 @@
  Ruby Swift Examples
 =====================
 
+The most well-supported Swift API is included in the Fog cloud services library.
+While the older CloudFiles library currently works, it is no longer developed
+or supported.
+
+Fog provides a standardized abstraction layer using provider-neutral concepts
+of directories (Swift containers) and files (Swift objects).
+
+If you'd prefer to work at a lower level with Swift-specific terminology, refer
+to Fog's `OpenStack Storage documentation`_.
+
+.. _OpenStack Storage documentation: https://github.com/fog/fog/blob/master/lib/fog/openstack/docs/storage.md
+
 Create a Connection
 ===================
 
@@ -11,15 +23,16 @@ This creates a connection so that you can interact with the server:
 
 .. code-block:: ruby
 
-	require 'cloudfiles'
+	require 'fog'
 	username = 'account_name:user_name'
 	api_key  = 'your_secret_key'
 
-	conn = CloudFiles::Connection.new(
-		:username => username,
-		:api_key  => api_key,
-		:auth_url => 'http://objects.dreamhost.com/auth'
-	)
+  conn = Fog::Storage.new(
+    provider: 'OpenStack',
+    openstack_username: username,
+    openstack_api_key: api_key,
+    openstack_auth_url: 'http://objects.dreamhost.com/auth'
+  )
 
 
 Create a Container
@@ -29,18 +42,20 @@ This creates a new container called ``my-new-container``
 
 .. code-block:: ruby
 
-	container = conn.create_container('my-new-container')
+	container = conn.directories.create(key: 'my-new-container')
 
 
 Create an Object
 ================
 
-This creates a file ``hello.txt`` from the file named ``my_hello.txt``
+This creates a file ``hello.txt`` from the local file named ``my_hello.txt``
 
 .. code-block:: ruby
 
-	obj = container.create_object('hello.txt')
-	obj.load_from_filename('./my_hello.txt')
+	obj = container.files.create(
+    key: 'hello.txt',
+    body: File.open './my_hello.txt'
+  )
 	obj.content_type = 'text/plain'
 
 
@@ -48,13 +63,13 @@ This creates a file ``hello.txt`` from the file named ``my_hello.txt``
 List Owned Containers
 =====================
 
-This gets a list of Containers that you own, and also prints out 
+This gets a list of Containers that you own, and also prints out
 the container name:
 
 .. code-block:: ruby
 
-	conn.containers.each do |container|
-		puts container
+	conn.directories.each do |container|
+		puts container.key
 	end
 
 The output will look something like this::
@@ -67,21 +82,19 @@ The output will look something like this::
 List a Container's Contents
 ===========================
 
-This gets a list of objects in the container, and prints out each 
+This gets a list of objects in the container, and prints out each
 object's name, the file size, and last modified date:
 
 .. code-block:: ruby
 
-	require 'date'  # not necessary in the next version
-
-	container.objects_detail.each do |name, data|
-		puts "#{name}\t#{data[:bytes]}\t#{data[:last_modified]}"
+	container.files.each do |object|
+		puts "#{object.key}\t#{object.content_length}\t#{object.last_modified}"
 	end
 
 The output will look something like this::
 
-   myphoto1.jpg	251262	2011-08-08T21:35:48.000Z
-   myphoto2.jpg	262518	2011-08-08T21:38:01.000Z
+   myphoto1.jpg	251262	2011-08-08 21:35:48 UTC
+   myphoto2.jpg	262518	2011-08-08 21:38:01 UTC
 
 
 
@@ -93,8 +106,8 @@ This downloads the object ``hello.txt`` and saves it in
 
 .. code-block:: ruby
 
-	obj = container.object('hello.txt')
-	obj.save_to_filename('./my_hello.txt')
+	obj = container.files.get('hello.txt')
+	File.write('./my_hello.txt', obj.body)
 
 
 Delete an Object
@@ -104,16 +117,28 @@ This deletes the object ``goodbye.txt``:
 
 .. code-block:: ruby
 
-	container.delete_object('goodbye.txt')
-	
+	container.files.destroy('goodbye.txt')
+
+You may also delete a file using its reference:
+
+.. code-block:: ruby
+
+  obj.destroy
+
 
 Delete a Container
 ==================
 
 .. note::
 
-   The container must be empty! Otherwise the request won't work!
+   The container must be empty or the request will fail!
 
 .. code-block:: ruby
 
-	container.delete_container('my-new-container')
+	container.destroy
+
+You may also delete a container without a reference:
+
+.. code-block:: ruby
+
+  conn.directories.destroy('my-new-container')
